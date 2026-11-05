@@ -1,177 +1,164 @@
-# Apekso — Data Infrastructure Engineer: Interview Prep
+# Apekso — Interview Prep (built from the job post and your resume)
 
-## 0. What we know about Apekso (verify before the interview)
+## 0. What they're testing, and where your resume already answers it
 
-From public profiles (Crunchbase, Dealroom, Briter). These are thin and partly AI-generated, so **check them on apekso.com and LinkedIn tonight**:
+The job post: *"We build and run data-intensive software: backend services, databases, web interfaces, and the infrastructure under them."* They shortlisted you for your **data engineering** background. Lead with it.
 
-- **Dubai-based, 1–10 people.** A small, senior-led team.
-- **Product, "Flow":** an AI-native, **real-time** learning space where users **speak and draw together** on a shared canvas. As someone talks through a STEM concept, the system generates matching drawings.
-- They also do **selected engineering work** (a studio model) in **real-time systems, infrastructure and applied AI**.
-- Funding is unclear: one profile says no external funding, another lists a $3.3M pre-Series A (March 2026).
-
-**What "Data Infrastructure Engineer" probably means there.** At a 10-person AI startup, it isn't "maintain the Airflow DAGs." Expect a generalist who owns:
-1. **Event and data capture** from real-time sessions (voice, canvas strokes, AI actions).
-2. **Storage and databases** (Postgres, object storage, maybe a vector DB).
-3. **AI/LLM data plumbing**: transcripts, prompts and responses, evaluation datasets, RAG indexes, latency and cost tracking.
-4. **Analytics**: product usage and learning outcomes.
-5. **Platform basics**: cloud, IaC, CI/CD, observability, security and privacy (students, possibly minors).
-
-**Your positioning in one line:** *"I build data infrastructure that is simple to operate for a small team, from real-time event capture to analytics and AI datasets, using managed services where they save time and owning the parts that matter for the product."*
-
----
-
-## 1. Plan for tonight and tomorrow
-
-| When | Do |
+| They ask for | Your evidence (from your resume) |
 |---|---|
-| Tonight, 30 min | Check §0 on apekso.com, LinkedIn and the job post. Note their stack: cloud, languages, anything about WebRTC/WebSockets, LLM providers. |
-| Tonight, 60 min | §3 system design: draw "Flow's data platform" once on paper, timed to 35 min. |
-| Tonight, 45 min | §2 fundamentals: say the answers out loud. Focus on Postgres and streaming. |
-| Tonight, 15 min | Adapt your intro (§5) and pick 3 stories. |
-| Tomorrow AM | Re-read §6 (cheat sheet) and §7 (questions to ask). No new material. |
+| Software real users depended on in production, 3+ years | MICHU lending platform: **6 banks, 2M+ users, 30B+ ETB disbursed**. KYC/KYB platform with **2M+ records**. 4+ years. |
+| Design database schemas and data flows | Consolidated KYC/KYB data from multiple source databases. UUID surrogate keys to fix ID and phone-number collisions. MongoDB → Oracle normalisation. Dimensional modelling. |
+| SQL, Linux, working problems out from logs | Expert SQL. PostgreSQL tuned for **~900 req/s**. Traced incidents through logs and metrics to root cause. Prometheus, Grafana, ELK. |
+| Find your way around code you didn't write, decide, explain | Moved from software engineering into lending data. Led 5 engineers with code review practices. Introduced hexagonal architecture. |
+| Uses AI coding tools and rigorously tests and reviews the output | **n8n workflows orchestrating Claude Code agents**. Automated testing and data validation. |
+| Docker / Kubernetes, monitoring, fixing failures | Docker, CI/CD, Azure, Prometheus/Grafana/ELK. Added monitoring after the CDC stall. |
+| Backend services and integrations | FastAPI, Django and Node.js services. Webhooks and API integrations. RabbitMQ and Redis queues. |
+
+**Your one-line positioning:** *"I build and run data systems that people depend on, and I'm at my best when something breaks and I have to work out why from the logs and the data."*
+
+Their hiring process has 3 steps. Prepare for each one:
+1. **Describe a software or data system you built and ran** (§1)
+2. **A practical task using your normal AI tools.** They watch how you direct the tools, check the output, and explain the code (§2)
+3. **A conversation about the work and how you'd approach it** (§3–§6)
 
 ---
 
-## 2. Technical topics, ranked by likelihood
+## 1. Step 1: "Describe a system you built and ran"
 
-### 2.1 Real-time event pipelines (core to their product)
-The zoomcamp material that maps here is `07-streaming/` (Kafka/Redpanda, Flink, windows, late events).
+### Main story: the KYC/KYB consolidation platform (Kifiya)
+It's your strongest fit because it covers schema design, data flow, a production failure you diagnosed, reliability patterns, PII, and team leadership.
 
-- **Capturing events from a real-time collaborative app.** Clients connect over WebSockets (or WebRTC for audio). The app server sends every event (`stroke_added`, `utterance_transcribed`, `ai_drawing_generated`, `session_joined`) to a log or queue. Each event gets an `event_id` (UUID), `session_id`, `user_id`, `event_type`, `client_ts`, `server_ts`, `schema_version` and a payload.
-- **Why `client_ts` *and* `server_ts`?** Client clocks drift. Use the server time for ordering and the client time for UX latency analysis. This is the event-time vs. processing-time distinction from module 07.
-- **Ordering:** guarantee it *per session*, not globally. Use `session_id` as the Kafka partition key, or one Redis Stream per session. Ordering per key matters for replaying a canvas.
-- **Delivery semantics:** at-least-once plus idempotent writes (dedup on `event_id`). Exactly-once is rarely worth the complexity at their scale.
-- **Choosing a queue for a small team:**
-  - *Redis Streams:* simple, probably already in the stack for real-time presence, but limited retention and replay.
-  - *Managed Kafka* (MSK, Confluent, Redpanda Cloud): durable replay and a large ecosystem, but costs more and adds operational load.
-  - *Cloud-native* (Kinesis, Pub/Sub, SQS + Firehose → S3): the least operational work.
-  - *Postgres-only to start* (outbox table + batch export): fine for the first thousands of users.
-  - **Say:** "Start with the simplest option that gives durable replay. Move to Kafka when there are several consumers or throughput needs it."
-- **Backpressure and burstiness:** a classroom of 30 students starts at 9:00 at the same moment. Buffer in the queue, scale consumers out, keep producers non-blocking, use a dead-letter queue for poison messages.
-- **Hot vs. cold path:** the hot path (live canvas sync) must never be blocked by analytics writes. Analytics is asynchronous, sent fire-and-forget to the queue.
+**Structure (about 5 minutes; fill in the blanks with real details, don't improvise numbers):**
 
-### 2.2 Databases: Postgres depth (very likely at a startup)
-- **Indexes:** B-tree (the default), GIN (JSONB, full text), BRIN (huge append-only time series), partial indexes, composite index column order. Read `EXPLAIN ANALYZE`: seq scan vs. index scan, rows estimated vs. actual.
-- **MVCC and VACUUM:** updates create new row versions, and VACUUM reclaims dead tuples. Autovacuum tuning, table bloat, transaction ID wraparound.
-- **Partitioning:** declarative range partitioning by time for event tables. Dropping an old partition is cheap retention (much cheaper than `DELETE`).
-- **Replication and HA:** streaming replication, read replicas (and replication lag), failover. Managed options: RDS/Aurora, Cloud SQL, Neon, Supabase.
-- **Connection pooling:** PgBouncer, because WebSocket servers × connections can exhaust `max_connections`.
-- **JSONB vs. columns:** JSONB for flexible event payloads, promoted to real columns once a field is queried often.
-- **OLTP vs. OLAP:** don't run analytics on the production primary. Use a replica, then CDC or exports to a warehouse/lakehouse (BigQuery, ClickHouse, DuckDB on Parquet).
-- **Backups and DR:** PITR (WAL archiving), *tested* restores, RPO/RTO targets.
+1. **The problem (30 s).** "KYC/KYB records for [which products or tenants] lived in [N] source databases, [which ones: Postgres? MongoDB?]. We needed one consistent, multi-tenant view for onboarding and verification, serving [who: banks, internal ops]."
+2. **What you built (90 s).** Draw the flow: *sources → CDC → [Redpanda/RabbitMQ] → consumers → consolidated store → services/API*.
+   - Hexagonal architecture: core logic separated from adapters (databases, queues), so sources could be swapped and tested.
+   - **UUID surrogate keys:** source IDs collided across databases, and phone numbers were reused or duplicated. Explain *why* you didn't use natural keys.
+   - **Reliability:** idempotent consumers, retries with backoff, dead-letter queues.
+   - **PII pseudonymisation and access control.**
+3. **What broke and how you found it (90 s). This is the part they care about most.** "CDC streams **stalled silently**: no errors, the data just stopped arriving." How did you notice (a user complaint? a row-count mismatch? stale timestamps)? What did the logs show? What was the root cause?
+   - The fix: **resume tokens** (a restarted consumer continues from its last processed position instead of starting over or skipping) plus **monitoring** (alert when the time since the last event or the consumer lag passes a threshold).
+4. **The result (30 s).** A number if you have one: records consolidated, incidents after the fix, detection time going from days to minutes.
+5. **What you'd do differently (30 s).** Shows judgment. For example: "I'd have built freshness and lag alerts on day one instead of after the incident."
 
-### 2.3 Storage layout for session data
-- **Canvas and session replay:** an event log (an append-only stroke and command stream) plus periodic snapshots (the full canvas state every N seconds). Replay = latest snapshot + the events after it. This is the same idea as Kafka log compaction and event sourcing.
-- **Audio:** raw audio goes to object storage (S3/GCS) with lifecycle rules. Transcripts and metadata go in Postgres or the warehouse. Store large blobs by pointer, never inside the database.
-- **The lake:** raw events land as **Parquet** in object storage, partitioned by `date=`/`event_type=`. Query them with DuckDB, Athena or BigQuery external tables (module 03). Add a table format (Iceberg/Delta) later if you need updates or deletes, e.g. for GDPR deletion.
-- **Retention tiers:** hot (days) → warm (months) → cold archive. Set policies per data class, with audio kept for the shortest time.
+**Follow-up questions to rehearse:**
+- *Which CDC mechanism?* MongoDB change streams, Debezium on Postgres, or something else? **What exactly is a resume token, and where did you store it?** If the token is older than the oplog/WAL retention window, you can't resume and you need a re-snapshot. What was your plan for that?
+- *Why did it stall silently?* Typical causes: a consumer stuck but not crashed, a cursor or connection that timed out without raising an error, an expired resume position, or a filter that dropped everything. Which was yours?
+- *How is a consumer idempotent?* What is the idempotency key (event ID, or source key plus version)? Upsert vs. "insert if not exists"? What about ordering (an update arriving before its insert)?
+- *What happens to messages in the DLQ?* Who looks at them? How do you replay them?
+- *How did you pseudonymise?* Keyed hashing (HMAC) vs. a tokenisation table vs. encryption. Who can re-identify a person, and how is that access controlled and audited?
+- *How did you deduplicate people across sources?* This links to your entity resolution project below.
+- *Multi-tenancy:* how was tenant data kept separate (tenant_id on every row, separate schemas, row-level security)?
 
-### 2.4 AI/LLM data infrastructure (their product is AI-native)
-- **Log every model call:** request ID, session, model, prompt version, input and output tokens, latency (time to first token and total), cost, errors. Prompts and responses go to storage (redacted where needed). Tools: LangSmith, Langfuse, Helicone, or your own table.
-- **Evaluation datasets:** sample real sessions → label them (human or LLM-as-judge) → a versioned eval set → regression tests on every prompt or model change. "Did the generated drawing match the concept spoken?"
-- **RAG/embeddings:** chunk the curriculum content, embed it, and store it in **pgvector** (simplest when Postgres already exists), Qdrant or Pinecone. Plan for re-embedding when the model changes (version the embedding columns), plus hybrid search (BM25 + vector).
-- **Latency budgets for real-time AI:** speech → text (streaming STT) → LLM → drawing must feel live (under about 1 s to the first visible output). Data infrastructure supports this with per-stage timing metrics and percentile dashboards (p50/p95/p99, never only averages).
-- **Cost tracking:** tokens and dollars per session or per user, alerts on spikes, caching of repeated prompts.
-- The zoomcamp has a little on RAG in `02-workflow-orchestration/16-retrieval-augmented-generation.md`.
+### Backup story A: MongoDB → Oracle ETL (Airflow)
+Good if they want something more *data-flow* focused: nested documents → normalised relational schema, change-stream capture **including deletes**, plus **initial-load, incremental and full-refresh modes**.
+- Be ready for: how you flattened arrays (child tables with foreign keys), how deletes were applied, how the run is made idempotent (re-runs after a failure), and how an initial load hands off to incremental sync without gaps or duplicates (record the stream position *before* the snapshot starts).
 
-### 2.5 Batch, orchestration and analytics (`02-`, `03-`, `04-` modules)
-- **Product analytics:** daily active learners, session length, the drop-off funnel, "time to first drawing," learning outcomes.
-- **Stack for a small team:** events → object storage → warehouse (BigQuery, ClickHouse, or MotherDuck/DuckDB) → dbt → Metabase. Orchestrate with Dagster, Kestra or plain cron + GitHub Actions to start. Fight over-engineering.
-- **Idempotency, backfills, partition overwrite, dbt incremental models with a lookback:** see `DEEP_DIVE_04_ANALYTICS_ENGINEERING.md`.
+### Backup story B: MICHU, PostgreSQL at ~900 req/s
+Good for "databases under real load." Know *what you tuned*: which queries (found with `pg_stat_statements` or slow query logs?), indexes added, `EXPLAIN ANALYZE` findings, connection pooling, N+1 queries, caching. Have one before/after number.
 
-### 2.6 Platform and operations ("infrastructure" is in the title)
-- **IaC:** Terraform with remote state, per-environment configs, plan in CI (`01-docker-terraform/`).
-- **Containers:** Docker multi-stage builds. Kubernetes vs. ECS/Cloud Run: for a 10-person team, **managed containers (Cloud Run/ECS Fargate) are usually right**. Say when you'd move to Kubernetes: many services, custom networking, GPU scheduling.
-- **WebSocket infrastructure specifics:** sticky sessions or a pub/sub backplane (Redis) so users of the same session on different servers stay in sync. Graceful draining on deploy. Load balancer idle timeouts.
-- **Observability:** metrics (Prometheus/Grafana or Datadog), structured logs, traces (OpenTelemetry). Pipeline SLOs: freshness, completeness (events received vs. sent, comparing client counters with server counts), and error rate.
-- **Security and privacy (important for education):** students may be **minors**. Apply data minimisation, encryption at rest and in transit, least-privilege IAM, PII separated from behaviour data, retention limits, and a right-to-deletion process. Regulation: **UAE PDPL**, plus GDPR or COPPA/FERPA if they sell to EU or US schools. Mention that voice recordings are sensitive.
-- **Cost:** a startup cares a lot. Right-size, use spot instances for batch jobs, set object storage lifecycles, use budget alerts, prefer serverless or scale-to-zero.
+### Backup story C: Entity resolution (Splink)
+"Blocking reduced 14.7B candidate pairs to 77M." Be ready to explain blocking: only compare records that share a cheap key (e.g. same phone prefix, or same date of birth plus first initial). Explain precision vs. recall, and how you checked match quality.
 
 ---
 
-## 3. System design: "Design the data infrastructure for Flow" (practice this one)
+## 2. Step 2: practical task with your normal AI tools
 
-**Clarify first (say these out loud):**
-- Scale now and in 12 months: concurrent sessions, events/sec per session (strokes are bursty, maybe 10–50/s while drawing), number of users.
-- Consumers: session replay? teacher dashboards? product analytics? model evaluation/training?
-- Latency needs: live sync (ms, hot path) vs. dashboards (minutes) vs. analytics (hourly or daily).
-- Privacy: minors? where is the data stored (UAE residency)? can audio be retained?
-- Team: who will operate it? (probably you)
+**What they say they're judging:** *how you direct the tools, how you check the output, and whether you can explain the code afterwards.* The result alone isn't enough. They're watching your **process**.
 
-**Architecture (draw it):**
-```
-Clients (web/tablet)
-   │ WebSocket / WebRTC
-   ▼
-Realtime servers ──► Redis pub/sub (live sync between servers; hot path, not stored)
-   │  async, fire-and-forget
-   ▼
-Event queue (Kinesis / Pub/Sub / Redpanda)  ── key = session_id
-   ├─► Stream consumer ─► Postgres: session state + snapshots (replay)
-   ├─► Firehose/consumer ─► Object storage, raw Parquet (date/event_type)  ◄── audio blobs (S3, lifecycle)
-   │                            │
-   │                            ▼
-   │                      Warehouse (BigQuery / ClickHouse) ─► dbt ─► Metabase / teacher dashboards
-   └─► AI call logs ─► LLM observability store ─► eval datasets ─► prompt/model regression tests
+For a data-focused candidate, likely tasks: build a small ingestion or integration (an API → database), design a schema plus queries for a scenario, fix a failing pipeline or service from its logs, or add a feature with tests to existing code.
 
-Cross-cutting: Terraform · CI/CD · OpenTelemetry + alerts · IAM / encryption / retention & deletion jobs
-```
+### How to work (say this out loud as you go)
+1. **Read the task and the existing code before prompting.** Restate the task in your own words. Ask clarifying questions (data volume, duplicates, what "done" means).
+2. **Give the AI the context and constraints:** the schema, an example of the input, the edge cases, and "don't change X."
+3. **Ask for small steps, not the whole thing at once.** Review each diff before moving on.
+4. **Write or ask for tests for the edge cases first:** empty input, duplicates, NULLs, malformed rows, re-runs.
+5. **Run it.** Check the output with your own SQL: row counts, sums, duplicate check, spot-check a few records against the source.
+6. **Reject or rewrite anything you can't explain.** Say so: "I'm not keeping this part until I understand it."
 
-**Deep dives they might push on:**
-1. **Session replay correctness:** ordering per session, snapshot + log, idempotent dedup on `event_id`, handling clients that reconnect and resend buffered events.
-2. **Late or offline events:** a tablet loses Wi-Fi and syncs 2 minutes later. Event time vs. server time, a lookback window in the downstream aggregations (module 07 late events, module 04 incremental lookback).
-3. **Schema evolution:** a `schema_version` field, a registry or JSON Schema validation at ingestion, additive changes only, a dead-letter queue for events that fail validation.
-4. **Deletion requests:** a user ID → all stores map; deletes in Postgres; on the lake, either partition by user or tenant, or use Iceberg/Delta row deletes; audio removed by prefix. Show that you thought about this at design time.
-5. **Evolution path:** v0 = Postgres + nightly export to the warehouse. v1 = a managed queue + lake. v2 = stream processing (Flink) only if real-time analytics becomes a product feature, e.g. a live teacher dashboard showing class engagement.
+### Review checklist for AI-generated data code (your differentiator)
+- **Errors swallowed** (`except: pass`, ignored return values) → silent data loss. *Your CDC story is exactly this failure.*
+- **SQL built with string formatting** → injection. Use parameters.
+- **Not idempotent:** a re-run inserts duplicates. Use upsert, `ON CONFLICT`, or delete+insert per partition.
+- **No unique constraint:** dedup in the application but not enforced in the database.
+- **Missing transaction:** a partial write on failure.
+- **Money as float** (a fintech habit to show!) → use `NUMERIC`/`Decimal`.
+- **Time zones:** naive timestamps. Use `timestamptz`, store in UTC.
+- **NULL handling:** `NOT IN` with NULLs, `COUNT(col)` vs. `COUNT(*)`, joins that silently drop rows.
+- **No `ORDER BY`** but the code assumes an order. Pagination with `OFFSET` that skips or repeats rows while data changes (use keyset pagination).
+- **Retries with no backoff, or retrying non-transient errors.** No timeouts on HTTP or database calls.
+- **Loading everything into memory** instead of chunking or streaming.
+- **Comments or docstrings that claim behaviour the code doesn't have.** AI often does this.
+- **Hallucinated library functions or parameters.** Run it, don't trust it.
 
-**Close with trade-offs:** "I'm choosing managed services over Kafka on Kubernetes because there's a team of one or two to operate it. The cost is some lock-in and less control. I'd revisit at about X events per second or when we need multi-consumer replay."
+### Afterwards: explaining the code
+Walk through it as **data flow → key decisions → failure handling → how you tested it → what you'd add with more time** (monitoring, alerts, documentation).
 
 ---
 
-## 4. Likely hands-on tasks
-- **SQL:** sessions per user, session duration from start and end events (`lead()` or min/max per session), funnel drop-off, p95 latency with `percentile_cont`, deduplicating on `event_id` (see `INTERVIEW_PREP.md` §4).
-- **Python:** an idempotent consumer (read batch → dedup → upsert → commit offset *after* the write), retry with backoff, chunked writes of Parquet to S3, a simple FastAPI ingestion endpoint with validation (pydantic).
-- **Debugging scenario:** "Dashboards show 20% fewer sessions since Tuesday's deploy." Walk through it: compare client-sent counters with server-received events, check queue consumer lag and the dead-letter queue, check for schema validation rejects, then the deploy diff. The fix should come with a completeness alert.
-- **Postgres scenario:** "Event table queries got slow at 200M rows." Look at `EXPLAIN ANALYZE`, check indexes (BRIN on time), partition by month, move analytics off the primary, check vacuum and bloat.
+## 3. Schema design and data flows (in their list of what you'll do)
+
+Practise one out loud: **"Design the schema for a multi-tenant loan application and verification system"** (it plays to your experience).
+- Entities: `tenants`, `customers`, `applications`, `documents`, `verifications`, `events/audit_log`.
+- **Keys:** UUID surrogate primary keys (your collision story), natural keys as `UNIQUE` constraints per tenant, e.g. `UNIQUE (tenant_id, national_id)`.
+- **Constraints do the work:** `NOT NULL`, `CHECK (amount > 0)`, foreign keys, enums or lookup tables for status.
+- **Status changes:** current status on the row plus an append-only history or event table (who, when, from → to). This makes audits easy.
+- **Types:** `NUMERIC(18,2)` for money, `timestamptz`, `JSONB` only for genuinely variable payloads.
+- **Indexes from query patterns:** `(tenant_id, status, created_at)`. A partial index for "pending" items.
+- **Tenant isolation:** `tenant_id` on every table, plus Postgres row-level security.
+- **PII:** separate table or column-level encryption, pseudonymised IDs in analytics copies.
+- **Schema changes on a live system:** expand → migrate → contract (add the new column, backfill, switch reads, then drop the old one), so there's no downtime.
+- **Data flow out:** OLTP → CDC → warehouse for analytics, never heavy queries on the primary.
 
 ---
 
-## 5. Your intro (adapt) and the stories to pick
+## 4. SQL, Linux and logs
 
-> "I'm a data engineer focused on building pipelines and the platforms underneath them: batch and streaming ingestion, warehouses and dbt modelling, and the infrastructure (Docker, Terraform, cloud) to run them reliably. Recently I ___ [one win with a number]. Flow interests me because real-time collaboration plus AI produces exactly the kind of data that's hard to get right: high-frequency, ordered per session, privacy-sensitive, and directly useful for improving the model. In a small team I'm comfortable owning everything from event schema to dashboards."
+**SQL tasks to be fluent in:** window functions (`row_number` for dedup, `lag` for changes, running totals), latest record per key, gaps in sequences, a funnel per status, `EXPLAIN ANALYZE` reading. Drills are in `INTERVIEW_PREP.md` §4.
 
-**Prepare three short STAR stories:**
-1. **Built something from zero:** chose simple tools and shipped quickly. (Small startups love this.)
-2. **A production incident:** found the root cause, fixed it, and added monitoring so it couldn't recur.
-3. **A trade-off you pushed back on:** e.g. no Kafka yet, a managed service instead, and the cost or time it saved.
+**Debugging from logs: a method to say out loud:**
+1. Define the symptom precisely: what, since when, for whom.
+2. Check what changed: deploys, config, upstream data, volume.
+3. Find one failing request or record ID and follow it through the logs (correlation or request IDs).
+4. Form a hypothesis → check it → fix → **add the alert or test that would have caught it**.
+
+**Linux commands to know:** `tail -f`, `less +F`, `grep -i -C 3`, `grep -c`, `awk '{print $9}' | sort | uniq -c | sort -rn` (count by field), `jq` for JSON logs, `journalctl -u svc --since "1 hour ago"`, `docker logs -f --since 10m`, `df -h` / `du -sh` (full disk is a classic cause), `free -m`, `top`/`htop`, `ss -tlnp` (what's listening), `curl -v`.
 
 ---
 
-## 6. Cheat sheet (read tomorrow morning)
-- **Hot path ≠ analytics path.** Analytics is asynchronous and never blocks the live canvas.
-- **Key by `session_id`** → ordering per session. **`event_id`** → idempotent dedup. **`client_ts` + `server_ts`**.
-- **Snapshot + event log** = replay and recovery.
-- **Raw Parquet in object storage, partitioned by date** → warehouse → dbt → BI.
-- **Postgres:** partition by time, BRIN, PgBouncer, replicas for reads, tested PITR.
-- **LLM data:** log every call (tokens, latency p95, cost, prompt version) → eval sets → regression tests.
-- **Privacy:** minors and voice data → minimise, encrypt, set retention, design deletion in from the start.
-- **Small team** → managed and serverless first. Say *when* you'd move to the heavier option.
-- Every answer gets a *why*, a *trade-off*, and *what you'd do next*.
+## 5. Gaps in the job post: answer honestly and briefly
+
+You didn't list Go, Kubernetes or TypeScript, and they shortlisted you anyway. If it comes up, don't over-explain:
+
+> "I haven't used Go in production. My backend work has been Python and Node.js. The concepts carry over (HTTP services, queues, database access, testing), and I'd expect to get productive in Go quickly, with AI tools helping me learn while I review everything carefully. My strength is the data side: schemas, data flows, and keeping pipelines correct in production."
+
+Kubernetes: know the vocabulary for a conversation (pod, deployment, service, ConfigMap/Secret, readiness and liveness probes, `kubectl logs` / `describe`, CrashLoopBackOff, OOMKilled). Say you've worked with Docker and CI/CD on Azure.
+
+---
+
+## 6. Questions about your resume to expect
+- **"You started at EagleLion in June 2026. Why look now?"** Have a short, positive answer about what you want next (e.g. building and running software used directly by users, a broader engineering role). Don't criticise the current employer.
+- **"Architect, Data Engineer / Scientist": what's your actual day-to-day?**
+- **"How do you check what your n8n Claude Code agents produce?"** This maps *directly* to their AI criterion. Be ready with specifics: tests, human approval steps, logging, limits on what agents can do, examples of output you rejected.
+- **"Tell me about leading 5 engineers."** Code review standards, testing, how you handled disagreement.
+- **"PCA for credit scoring: how did you keep it interpretable?"** Factor loadings mapped to business meaning. Be ready for trade-offs vs. simpler scorecards.
 
 ---
 
 ## 7. Questions to ask them
-1. What does the data stack look like today, and what's the most painful part?
-2. What does "data infrastructure" cover here: product analytics, AI and evaluation data, the real-time backend, or all of them?
-3. How do you evaluate whether the AI drawings are good today? Is there an eval pipeline?
-4. Who are the users today: schools, individual learners, enterprise studio clients? Any data residency or child-privacy requirements?
-5. How is engineering time split between Flow and studio client work?
-6. What would make the first 90 days a success for this hire?
+1. What kind of data-intensive systems are you building right now, and for which clients or users?
+2. What does the data side look like: databases, volumes, pipelines?
+3. How does the team use AI coding tools day to day, and how do you review what they produce?
+4. When something breaks in production, how is it found and who handles it?
+5. How much time goes to working directly with users, as the job post mentions?
+6. What would a successful first 3 months look like in this role?
 
 ---
 
-### Sources
-- [Crunchbase — Apekso](https://www.crunchbase.com/organization/apekso)
-- [Dealroom — Apekso](https://app.dealroom.co/companies/apekso)
-- [Briter — Apekso](https://www.briter.co/companies/apekso)
-- [Apekso — About](https://apekso.com/about) (not readable from this session; check it yourself)
+## 8. Cheat sheet for the morning
+- Lead with **production + data + debugging**: MICHU (6 banks, 2M+ users), KYC/KYB (2M+ records), 900 req/s Postgres.
+- **System story:** problem → architecture → *silent CDC stall* → resume tokens + monitoring → result → what you'd change.
+- **AI task:** clarify → give context → small steps → tests first → run and check with SQL → reject what you can't explain.
+- **Reliability words:** idempotency key, upsert, unique constraint, retry with backoff, DLQ, resume position, lag/freshness alert.
+- **Schema words:** surrogate vs. natural keys, constraints, `NUMERIC` for money, `timestamptz`, expand/contract migrations, row-level security.
+- **Gaps:** honest, one sentence, then back to your strengths.
